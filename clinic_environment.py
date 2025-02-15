@@ -342,6 +342,8 @@ class ClinicEnv(gym.Env):
                     nurse.travel_to(
                         clinic, self.clinic_travel_times[nurse.location.idx][clinic.idx]
                     )
+                else:
+                    return self._get_terminal_state()
         # Step through time.
 
         for nurse in self.nurses:
