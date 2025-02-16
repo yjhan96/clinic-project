@@ -27,7 +27,7 @@ class Nurse:
     def get_observation_space(num_clinics: int) -> gym.spaces.Space:
         return gym.spaces.Dict(
             {
-                "location": gym.spaces.Discrete(num_clinics),
+                "location": gym.spaces.Discrete(num_clinics, start=1),
                 "operating_minutes_left": gym.spaces.Box(0.0, float(OPERATING_TIME)),
                 "traveling_minutes_left": gym.spaces.Box(0.0, float(OPERATING_TIME)),
             }
@@ -265,7 +265,7 @@ class ClinicEnv(gym.Env):
             return (1, 0)
 
     def _get_info(self):
-        return None
+        return {}
 
     def _reset(self):
         self.clinics = [
@@ -376,7 +376,8 @@ class ClinicEnv(gym.Env):
 
         obs = self._get_obs()
         info = self._get_info()
-        reward = curr_num_done_patients - prev_num_done_patients
+        # Add minus one to encourage an agent to finish early.
+        reward = curr_num_done_patients - prev_num_done_patients - 1
         terminated = curr_num_done_patients == len(self.patients)
         truncated = False
 

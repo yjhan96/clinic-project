@@ -50,25 +50,25 @@ class ClinicAgent:
             res += nurse_action * (self.num_action_per_nurse**exp)
         return res
 
-    def get_action(self, obs) -> tuple[int]:
-        if np.random.random() < self.epsilon:
+    def get_action(self, obs, randomize: bool = True) -> tuple[int]:
+        if randomize and np.random.random() < self.epsilon:
             return self.env.action_space.sample()
         else:
-            action_int = np.argmax(self.q_values[obs])
+            action_int = np.argmax(self.q_values[tuple(obs)])
             return self._to_action(action_int)
 
     def update(self, obs, action, reward, terminated, next_obs):
         """Updates the Q-value of an action."""
         action_int = self._from_action(action)
-        future_q_value = (not terminated) * np.max(self.q_values[next_obs])
+        future_q_value = (not terminated) * np.max(self.q_values[tuple(next_obs)])
         temporal_difference = (
             reward
             + self.discount_factor * future_q_value
-            - self.q_values[obs][action_int]
+            - self.q_values[tuple(obs)][action_int]
         )
 
-        self.q_values[obs][action_int] = (
-            self.q_values[obs][action_int] + self.lr * temporal_difference
+        self.q_values[tuple(obs)][action_int] = (
+            self.q_values[tuple(obs)][action_int] + self.lr * temporal_difference
         )
         self.training_error.append(temporal_difference)
 
