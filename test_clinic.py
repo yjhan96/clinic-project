@@ -22,8 +22,9 @@ def test_obs():
     (state, obs), info = clinic_env.reset()
     assert info == {}
     assert state == 0
-    assert sorted(list(obs.keys())) == ["clinics", "nurses", "patients"]
+    assert sorted(list(obs.keys())) == ["clinics", "nurse_turn", "nurses", "patients"]
 
+    assert obs["nurse_turn"] == 0
     assert obs["clinics"] == (
         {"capacity": 1.0, "num_patients": 0.0},
         {"capacity": 2.0, "num_patients": 0.0},
@@ -53,8 +54,12 @@ def test_obs():
 def test_basic():
     clinic_env = get_test_env()
 
-    (state, obs), reward, terminated, truncated, _ = clinic_env.step((1, 4))
+    (state, obs), reward, terminated, truncated, _ = clinic_env.step(1)
     assert state == 0
+    assert obs["nurse_turn"] == 1
+    (state, obs), reward, terminated, truncated, _ = clinic_env.step(4)
+    assert state == 0
+    assert obs["nurse_turn"] == 0
     nurse_states = obs["nurses"]
     assert nurse_states[0] == {
         "location": 1,
@@ -80,7 +85,8 @@ def test_basic():
     assert reward == -1
     assert not terminated and not truncated
 
-    (_, obs), reward, _, _, _ = clinic_env.step((0, 0))
+    clinic_env.step(0)
+    (_, obs), reward, _, _, _ = clinic_env.step(0)
     nurse_states = obs["nurses"]
     assert nurse_states[0] == {
         "location": 1,
@@ -101,7 +107,8 @@ def test_basic():
     }
     assert reward == -1
 
-    (_, obs), reward, _, _, _ = clinic_env.step((0, 2))
+    clinic_env.step(0)
+    (_, obs), reward, _, _, _ = clinic_env.step(2)
     nurse_states = obs["nurses"]
     assert nurse_states[0] == {
         "location": 1,
@@ -133,7 +140,8 @@ def test_basic():
     }
     assert reward == -1
 
-    (_, obs), reward, _, _, _ = clinic_env.step((1, 0))
+    clinic_env.step(1)
+    (_, obs), reward, _, _, _ = clinic_env.step(0)
     nurse_states = obs["nurses"]
     assert nurse_states[0] == {
         "location": 1,
@@ -148,8 +156,9 @@ def test_basic():
         "treated_at": 1,
     }
 
-    clinic_env.step((0, 0))
-    (_, obs), reward, _, _, _ = clinic_env.step((0, 0))
+    for _ in range(3):
+        clinic_env.step(0)
+    (_, obs), reward, _, _, _ = clinic_env.step(0)
 
     nurse_states = obs["nurses"]
     assert nurse_states[0] == {
@@ -176,8 +185,9 @@ def test_basic():
     }
     assert reward == 0
 
-    clinic_env.step((0, 0))
-    (_, obs), reward, _, _, _ = clinic_env.step((0, 2))
+    for _ in range(3):
+        clinic_env.step(0)
+    (_, obs), reward, _, _, _ = clinic_env.step(2)
 
     patient_states = obs["patients"]
     assert patient_states[1] == {
@@ -187,8 +197,9 @@ def test_basic():
         "treated_at": 2,
     }
 
-    clinic_env.step((0, 0))
-    (_, obs), reward, terminated, _, _ = clinic_env.step((0, 0))
+    for _ in range(3):
+        clinic_env.step(0)
+    (_, obs), reward, terminated, _, _ = clinic_env.step(0)
     assert reward == 0
     assert terminated
 
@@ -203,34 +214,44 @@ def assert_game_over(state, obs, reward, terminated):
 def test_validation_fail():
     clinic_env = get_test_env()
     (state, obs), info = clinic_env.reset()
-    clinic_env.step((1, 0))
-    (state, obs), reward, terminated, _, _ = clinic_env.step((2, 0))
+    clinic_env.step(1)
+    clinic_env.step(0)
+
+    (state, obs), reward, terminated, _, _ = clinic_env.step(2)
     assert_game_over(state, obs, reward, terminated)
 
 
 def test_travel_fail():
     clinic_env = get_test_env()
     clinic_env.reset()
-    clinic_env.step((4, 0))
-    (state, obs), reward, terminated, _, _ = clinic_env.step((3, 0))
+    clinic_env.step(4)
+    clinic_env.step(0)
+    (state, obs), reward, terminated, _, _ = clinic_env.step(3)
     assert_game_over(state, obs, reward, terminated)
 
 
 def test_patient_fail():
     clinic_env = get_test_env()
     clinic_env.reset()
-    clinic_env.step((1, 0))
+    clinic_env.step(1)
+    clinic_env.step(0)
     for _ in range(2):
-        clinic_env.step((0, 0))
-    (state, obs), reward, terminated, _, _ = clinic_env.step((0, 0))
+        clinic_env.step(0)
+        clinic_env.step(0)
+    clinic_env.step(0)
+    (state, obs), reward, terminated, _, _ = clinic_env.step(0)
     assert_game_over(state, obs, reward, terminated)
 
 
 def test_inconsistent_patient_nurse_location():
     clinic_env = get_test_env()
     clinic_env.reset()
-    clinic_env.step((1, 4))
+    clinic_env.step(1)
+    clinic_env.step(4)
     for _ in range(2):
-        clinic_env.step((0, 0))
-    (state, obs), reward, terminated, _, _ = clinic_env.step((0, 1))
+        clinic_env.step(0)
+        clinic_env.step(0)
+
+    clinic_env.step(0)
+    (state, obs), reward, terminated, _, _ = clinic_env.step(1)
     assert_game_over(state, obs, reward, terminated)

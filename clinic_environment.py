@@ -217,6 +217,7 @@ class ClinicEnv(gym.Env):
 
         self._nonterminal_observation_space = gym.spaces.Dict(
             {
+                "nurse_turn": gym.spaces.Discrete(num_nurses),
                 "nurses": gym.spaces.Tuple(
                     tuple(
                         [
@@ -242,14 +243,8 @@ class ClinicEnv(gym.Env):
         self.observation_space = gym.spaces.OneOf(
             (self._nonterminal_observation_space, self._terminal_observation_space)
         )
-
-        self.action_space = gym.spaces.Tuple(
-            tuple(
-                [
-                    gym.spaces.Discrete(1 + len(self.patients) + len(self.clinics))
-                    for _ in range(len(self.nurses))
-                ]
-            )
+        self.action_space = gym.spaces.Discrete(
+            1 + len(self.patients) + len(self.clinics)
         )
 
     def _get_obs(self):
@@ -257,6 +252,7 @@ class ClinicEnv(gym.Env):
             return (
                 0,
                 {
+                    "nurse_turn": self.nurse_turn,
                     "nurses": tuple([nurse._get_obs() for nurse in self.nurses]),
                     "patients": tuple(
                         [patient._get_obs() for patient in self.patients]
@@ -278,6 +274,8 @@ class ClinicEnv(gym.Env):
         self.nurses = [Nurse(self.clinics[0]) for _ in range(self.num_nurses)]
         self.patients = [Patient(patient_time) for patient_time in self.patient_times]
         self.is_terminated = False
+        # Index of which nurse to take action.
+        self.nurse_turn = 0
 
     def reset(self, seed: int | None = None, options: dict | None = None):
         super().reset(seed=seed)
@@ -304,15 +302,6 @@ class ClinicEnv(gym.Env):
     def is_valid_travel(self, nurse: Nurse, clinic: Clinic) -> bool:
         return nurse.status == NurseStatus.IDLE
 
-    def _get_terminal_obs(self):
-        return {
-            "nurses": tuple([nurse._get_terminal_obs() for nurse in self.nurses]),
-            "patients": tuple(
-                [patient._get_terminal_obs() for patient in self.patients]
-            ),
-            "clinics": tuple([clinic._get_terminal_obs() for clinic in self.clinics]),
-        }
-
     def _get_terminal_state(self):
         self.is_terminated = True
         obs = self._get_obs()
@@ -323,15 +312,14 @@ class ClinicEnv(gym.Env):
 
         return obs, reward, terminated, truncated, info
 
-    def get_valid_actions(self) -> tuple[tuple[int]]:
-        res = []
-        for nurse in self.nurses:
-            valid_nurse_actions = []
-            for nurse_action in range(self.action_space[0].n):
-                if self._is_valid_nurse_action(nurse, nurse_action):
-                    valid_nurse_actions.append(nurse_action)
-            res.append(tuple(valid_nurse_actions))
-        return tuple(res)
+    def get_valid_actions(self) -> tuple[int]:
+        nurse = self.nurses[self.nurse_turn]
+        valid_nurse_actions = []
+        for nurse_action in range(self.action_space.n):
+            if self._is_valid_nurse_action(nurse, nurse_action):
+                valid_nurse_actions.append(nurse_action)
+
+        return tuple(valid_nurse_actions)
 
     def _is_valid_nurse_action(self, nurse: Nurse, nurse_action: int) -> bool:
         if nurse_action == 0:
@@ -348,65 +336,73 @@ class ClinicEnv(gym.Env):
                 return False
         return True
 
-    def step(self, action: tuple[int]):
-        # Take action.
-        for nurse_idx, nurse_action in enumerate(action):
-            nurse = self.nurses[nurse_idx]
-
-            if nurse_action == 0:
-                pass
-            elif nurse_action >= 1 and nurse_action <= len(self.patients):
-                patient_idx = nurse_action - 1
-                patient_to_treat = self.patients[patient_idx]
-                if self.is_valid_treatment(nurse, patient_to_treat):
-                    patient_to_treat.get_treatment_from(nurse)
-                    nurse.treat(patient_to_treat)
-                else:
-                    return self._get_terminal_state()
+    def step(self, nurse_action: tuple[int]):
+        nurse = self.nurses[self.nurse_turn]
+        if nurse_action == 0:
+            pass
+        elif nurse_action >= 1 and nurse_action <= len(self.patients):
+            patient_idx = nurse_action - 1
+            patient_to_treat = self.patients[patient_idx]
+            if self.is_valid_treatment(nurse, patient_to_treat):
+                patient_to_treat.get_treatment_from(nurse)
+                nurse.treat(patient_to_treat)
             else:
-                dest_clinic = nurse_action - len(self.patients) - 1
-                clinic = self.clinics[dest_clinic]
-                if self.is_valid_travel(nurse, clinic):
-                    nurse.travel_to(
-                        clinic, self.clinic_travel_times[nurse.location.idx][clinic.idx]
-                    )
-                else:
-                    return self._get_terminal_state()
-        # Step through time.
+                return self._get_terminal_state()
+        else:
+            dest_clinic = nurse_action - len(self.patients) - 1
+            clinic = self.clinics[dest_clinic]
+            if self.is_valid_travel(nurse, clinic):
+                nurse.travel_to(
+                    clinic, self.clinic_travel_times[nurse.location.idx][clinic.idx]
+                )
+            else:
+                return self._get_terminal_state()
 
-        for nurse in self.nurses:
-            nurse.step(MINUTE_PER_STEP)
+        if self.nurse_turn == self.num_nurses - 1:
+            self.nurse_turn = 0
+            # Step through time.
+            for nurse in self.nurses:
+                nurse.step(MINUTE_PER_STEP)
 
-        prev_num_done_patients = len(
-            [
-                patient
-                for patient in self.patients
-                if patient.status == PatientStatus.DONE
-            ]
-        )
+            prev_num_done_patients = len(
+                [
+                    patient
+                    for patient in self.patients
+                    if patient.status == PatientStatus.DONE
+                ]
+            )
 
-        sick_patients = []
-        for patient in self.patients:
-            is_patient_ok = patient.step(MINUTE_PER_STEP)
-            if not is_patient_ok:
-                sick_patients.append(patient)
+            sick_patients = []
+            for patient in self.patients:
+                is_patient_ok = patient.step(MINUTE_PER_STEP)
+                if not is_patient_ok:
+                    sick_patients.append(patient)
 
-        if len(sick_patients) > 0:
-            return self._get_terminal_state()
+            if len(sick_patients) > 0:
+                return self._get_terminal_state()
 
-        curr_num_done_patients = len(
-            [
-                patient
-                for patient in self.patients
-                if patient.status == PatientStatus.DONE
-            ]
-        )
+            curr_num_done_patients = len(
+                [
+                    patient
+                    for patient in self.patients
+                    if patient.status == PatientStatus.DONE
+                ]
+            )
 
-        obs = self._get_obs()
-        info = self._get_info()
-        # Add minus one to encourage an agent to finish early.
-        reward = curr_num_done_patients - prev_num_done_patients - 1
-        terminated = curr_num_done_patients == len(self.patients)
-        truncated = False
+            obs = self._get_obs()
+            info = self._get_info()
+            # Add minus one to encourage an agent to finish early.
+            reward = curr_num_done_patients - prev_num_done_patients - 1
+            terminated = curr_num_done_patients == len(self.patients)
+            truncated = False
 
-        return obs, reward, terminated, truncated, info
+            return obs, reward, terminated, truncated, info
+        else:
+            self.nurse_turn += 1
+            obs = self._get_obs()
+            info = self._get_info()
+            reward = 0
+            terminated = False
+            truncated = False
+
+            return obs, reward, terminated, truncated, info

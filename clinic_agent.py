@@ -15,10 +15,7 @@ class ClinicAgent:
         discount_factor: float = 1.0,
     ):
         self.env = env
-        num_total_actions = math.prod([space.n for space in env.action_space.spaces])
-        self.q_values = defaultdict(lambda: np.zeros(num_total_actions))
-        self.num_action_per_nurse: int = env.action_space.spaces[0].n
-        self.num_nurses: int = len(env.action_space.spaces)
+        self.q_values = defaultdict(lambda: np.zeros(env.action_space.n))
 
         self.lr = learning_rate
         self.discount_factor = discount_factor
@@ -29,50 +26,24 @@ class ClinicAgent:
 
         self.training_error = []
 
-    def _to_action(self, action_int: int) -> tuple[int]:
-        res = []
-        curr_num = action_int
-        curr_exp = self.num_nurses - 1
-        while curr_exp > 0:
-            divider = self.num_action_per_nurse**curr_exp
-            quotient = curr_num // divider
-            res.append(quotient)
-            curr_num -= quotient * divider
-            curr_exp -= 1
-        res.append(curr_num)
-        return tuple(res)
-
-    def _from_action(self, action: tuple[int]) -> int:
-        res = 0
-        for nurse_action, exp in zip(
-            action, range(self.num_nurses - 1, -1, -1), strict=True
-        ):
-            res += nurse_action * (self.num_action_per_nurse**exp)
-        return res
-
-    def get_action(self, obs, randomize: bool = True) -> tuple[int]:
+    def get_action(self, obs, randomize: bool = True) -> int:
         if randomize and np.random.random() < self.epsilon:
             valid_actions = self.env.get_valid_actions()
-            action = []
-            for valid_nurse_action in valid_actions:
-                action.append(np.random.choice(valid_nurse_action))
-            return tuple(action)
+            return np.random.choice(valid_actions)
         else:
-            action_int = np.argmax(self.q_values[tuple(obs)])
-            return self._to_action(action_int)
+            return np.argmax(self.q_values[tuple(obs)])
 
     def update(self, obs, action, reward, terminated, next_obs):
         """Updates the Q-value of an action."""
-        action_int = self._from_action(action)
         future_q_value = (not terminated) * np.max(self.q_values[tuple(next_obs)])
         temporal_difference = (
             reward
             + self.discount_factor * future_q_value
-            - self.q_values[tuple(obs)][action_int]
+            - self.q_values[tuple(obs)][action]
         )
 
-        self.q_values[tuple(obs)][action_int] = (
-            self.q_values[tuple(obs)][action_int] + self.lr * temporal_difference
+        self.q_values[tuple(obs)][action] = (
+            self.q_values[tuple(obs)][action] + self.lr * temporal_difference
         )
         self.training_error.append(temporal_difference)
 

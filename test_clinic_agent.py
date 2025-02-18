@@ -16,28 +16,3 @@ def get_test_env() -> ClinicEnv:
         num_nurses=num_nurses,
     )
     return clinic_env
-
-
-def get_all_actions(action_space):
-    def generator(actions, accum):
-        if len(actions) == 0:
-            yield accum
-        else:
-            action, rest = actions[0], actions[1:]
-            for i in range(action.n):
-                yield from generator(rest, accum + (i,))
-
-    return generator(action_space.spaces, ())
-
-
-def test_action_conversion():
-    clinic_env = get_test_env()
-    agent = ClinicAgent(
-        clinic_env,
-        learning_rate=1.0,
-        initial_epsilon=0.2,
-        epsilon_decay=0.05,
-        final_epsilon=0.05,
-    )
-    for action in get_all_actions(clinic_env.action_space):
-        assert agent._to_action(agent._from_action(action)) == action
