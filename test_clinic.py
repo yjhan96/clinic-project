@@ -20,7 +20,7 @@ def get_test_env() -> ClinicEnv:
 def test_obs():
     clinic_env = get_test_env()
     (state, obs), info = clinic_env.reset()
-    assert info == None
+    assert info == {}
     assert state == 0
     assert sorted(list(obs.keys())) == ["clinics", "nurses", "patients"]
 
@@ -77,7 +77,7 @@ def test_basic():
         "minutes_in_treatment": 5.0,
         "treated_at": 1,
     }
-    assert reward == 0
+    assert reward == -1
     assert not terminated and not truncated
 
     (_, obs), reward, _, _, _ = clinic_env.step((0, 0))
@@ -99,7 +99,7 @@ def test_basic():
         "minutes_in_treatment": 10.0,
         "treated_at": 1,
     }
-    assert reward == 0
+    assert reward == -1
 
     (_, obs), reward, _, _, _ = clinic_env.step((0, 2))
     nurse_states = obs["nurses"]
@@ -131,7 +131,7 @@ def test_basic():
         "minutes_in_treatment": 5.0,
         "treated_at": 2,
     }
-    assert reward == 0
+    assert reward == -1
 
     (_, obs), reward, _, _, _ = clinic_env.step((1, 0))
     nurse_states = obs["nurses"]
@@ -174,7 +174,7 @@ def test_basic():
         "minutes_in_treatment": 20.0,
         "treated_at": 2,
     }
-    assert reward == 1
+    assert reward == 0
 
     clinic_env.step((0, 0))
     (_, obs), reward, _, _, _ = clinic_env.step((0, 2))
@@ -189,14 +189,14 @@ def test_basic():
 
     clinic_env.step((0, 0))
     (_, obs), reward, terminated, _, _ = clinic_env.step((0, 0))
-    assert reward == 1
+    assert reward == 0
     assert terminated
 
 
 def assert_game_over(state, obs, reward, terminated):
     assert state == 1
     assert obs == 0
-    assert reward == -1_000_000
+    assert reward == -1_000
     assert terminated
 
 

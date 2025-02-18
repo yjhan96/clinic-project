@@ -52,7 +52,11 @@ class ClinicAgent:
 
     def get_action(self, obs, randomize: bool = True) -> tuple[int]:
         if randomize and np.random.random() < self.epsilon:
-            return self.env.action_space.sample()
+            valid_actions = self.env.get_valid_actions()
+            action = []
+            for valid_nurse_action in valid_actions:
+                action.append(np.random.choice(valid_nurse_action))
+            return tuple(action)
         else:
             action_int = np.argmax(self.q_values[tuple(obs)])
             return self._to_action(action_int)

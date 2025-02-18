@@ -5,7 +5,7 @@ import numpy as np
 OPERATING_TIME = 15
 MAX_TREATMENT_TIME = 1000
 MAX_CAPACITY = 10
-MIN_REWARD = -1_000_000
+MIN_REWARD = -1_000
 MINUTE_PER_STEP = 5
 
 
@@ -51,6 +51,9 @@ class Nurse:
 
     def travel_to(self, clinic: "Clinic", traveling_time: int):
         assert self.status == NurseStatus.IDLE
+        if clinic == self.location:
+            assert traveling_time == 0
+            return
 
         self.status = NurseStatus.TRAVELING
         self.traveling_minutes_left = traveling_time
@@ -319,6 +322,31 @@ class ClinicEnv(gym.Env):
         info = self._get_info()
 
         return obs, reward, terminated, truncated, info
+
+    def get_valid_actions(self) -> tuple[tuple[int]]:
+        res = []
+        for nurse in self.nurses:
+            valid_nurse_actions = []
+            for nurse_action in range(self.action_space[0].n):
+                if self._is_valid_nurse_action(nurse, nurse_action):
+                    valid_nurse_actions.append(nurse_action)
+            res.append(tuple(valid_nurse_actions))
+        return tuple(res)
+
+    def _is_valid_nurse_action(self, nurse: Nurse, nurse_action: int) -> bool:
+        if nurse_action == 0:
+            return True
+        elif nurse_action >= 1 and nurse_action <= len(self.patients):
+            patient_idx = nurse_action - 1
+            patient_to_treat = self.patients[patient_idx]
+            if not self.is_valid_treatment(nurse, patient_to_treat):
+                return False
+        else:
+            dest_clinic = nurse_action - len(self.patients) - 1
+            clinic = self.clinics[dest_clinic]
+            if not self.is_valid_travel(nurse, clinic):
+                return False
+        return True
 
     def step(self, action: tuple[int]):
         # Take action.
