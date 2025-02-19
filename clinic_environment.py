@@ -5,7 +5,6 @@ import numpy as np
 OPERATING_TIME = 15
 MAX_TREATMENT_TIME = 1000
 MAX_CAPACITY = 10
-MIN_REWARD = -1_000
 MINUTE_PER_STEP = 5
 
 
@@ -276,6 +275,7 @@ class ClinicEnv(gym.Env):
         self.is_terminated = False
         # Index of which nurse to take action.
         self.nurse_turn = 0
+        self.num_turns = 0
 
     def reset(self, seed: int | None = None, options: dict | None = None):
         super().reset(seed=seed)
@@ -305,7 +305,7 @@ class ClinicEnv(gym.Env):
     def _get_terminal_state(self):
         self.is_terminated = True
         obs = self._get_obs()
-        reward = MIN_REWARD
+        reward = -1
         terminated = True
         truncated = False
         info = self._get_info()
@@ -360,17 +360,10 @@ class ClinicEnv(gym.Env):
 
         if self.nurse_turn == self.num_nurses - 1:
             self.nurse_turn = 0
+            self.num_turns += 1
             # Step through time.
             for nurse in self.nurses:
                 nurse.step(MINUTE_PER_STEP)
-
-            prev_num_done_patients = len(
-                [
-                    patient
-                    for patient in self.patients
-                    if patient.status == PatientStatus.DONE
-                ]
-            )
 
             sick_patients = []
             for patient in self.patients:
@@ -392,8 +385,8 @@ class ClinicEnv(gym.Env):
             obs = self._get_obs()
             info = self._get_info()
             # Add minus one to encourage an agent to finish early.
-            reward = curr_num_done_patients - prev_num_done_patients - 1
             terminated = curr_num_done_patients == len(self.patients)
+            reward = 1.0 / self.num_turns if terminated else 0.0
             truncated = False
 
             return obs, reward, terminated, truncated, info
