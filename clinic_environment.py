@@ -1,4 +1,5 @@
 from enum import IntEnum
+
 import gymnasium as gym
 import numpy as np
 

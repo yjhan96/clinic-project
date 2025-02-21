@@ -1,12 +1,14 @@
-from collections import defaultdict, deque, namedtuple
-import math
 import random
+from collections import defaultdict, deque, namedtuple
+
 import gymnasium as gym
 import numpy as np
-from torch import nn
+import torch
 import torch.nn.functional as F
 import torch.optim as optim
-import torch
+from torch import nn
+
+SAMPLE_SIZE = 5_000
 
 
 class ClinicAgent:
@@ -112,8 +114,7 @@ class ClinicDQNAgent:
         self.optimizer = optim.AdamW(
             self.policy_net.parameters(), lr=learning_rate, amsgrad=True
         )
-        self.fail_memory = ReplayMemory(10_000)
-        self.success_memory = ReplayMemory(10_000)
+        self.memory = ReplayMemory(10_000)
 
         self.discount_factor = discount_factor
 
@@ -123,10 +124,13 @@ class ClinicDQNAgent:
         self.tau = tau
         self.batch_size = batch_size
         self.training_error = []
+        self.sample_stats: tuple[torch.Tensor, torch.Tensor] | None = None
 
     def get_action(self, obs, randomize: bool = True) -> int:
         valid_actions = self.env.get_valid_actions()
-        if randomize and np.random.random() < self.epsilon:
+        if randomize and (
+            self.sample_stats is None or np.random.random() < self.epsilon
+        ):
             return torch.tensor(
                 [[np.random.choice(valid_actions)]],
                 device=self.device,
@@ -134,24 +138,32 @@ class ClinicDQNAgent:
             )
         else:
             with torch.no_grad():
-                valid_action_mask = torch.tensor(
-                    [(i in valid_actions) for i in range(self.env.action_space.n)],
-                    device=self.device,
-                    dtype=torch.bool,
-                ).unsqueeze(0)
-                obs = torch.tensor(
-                    obs, dtype=torch.float32, device=self.device
-                ).unsqueeze(0)
-                return (
-                    self.policy_net(obs)[valid_action_mask]
-                    .unsqueeze(0)
-                    .max(1)
-                    .indices.view(1, 1)
-                )
+                non_zero_std, mean = self.sample_stats
+                obs = (
+                    torch.tensor(
+                        obs, dtype=torch.float32, device=self.device
+                    ).unsqueeze(0)
+                    - mean
+                ) / non_zero_std
+                return self.policy_net(obs).max(1).indices.view(1, 1)
+
+    def _set_sample_stats(self):
+        transitions = self.memory.sample(SAMPLE_SIZE)
+        batch = Transition(*zip(*transitions))
+
+        state_batch = torch.cat(batch.state)
+        std, mean = torch.std_mean(state_batch, dim=0)
+        non_zero_std = torch.where(std == 0, 1.0, 0.0) + std
+        self.sample_stats = (non_zero_std, mean)
 
     def optimize_model(self):
-        if len(self.fail_memory) < self.batch_size:
+        if len(self.memory) < SAMPLE_SIZE:
             return
+
+        if self.sample_stats is None:
+            self._set_sample_stats()
+
+        non_zero_std, mean = self.sample_stats
 
         transitions = self.memory.sample(self.batch_size)
 
@@ -162,10 +174,10 @@ class ClinicDQNAgent:
             device=self.device,
             dtype=torch.bool,
         )
-        non_final_next_states = torch.cat(
-            [s for s in batch.next_state if s is not None]
-        )
-        state_batch = torch.cat(batch.state)
+        non_final_next_states = (
+            torch.cat([s for s in batch.next_state if s is not None]) - mean
+        ) / non_zero_std
+        state_batch = (torch.cat(batch.state) - mean) / non_zero_std
         action_batch = torch.cat(batch.action)
         reward_batch = torch.cat(batch.reward)
 
