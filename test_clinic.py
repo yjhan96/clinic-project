@@ -82,7 +82,7 @@ def test_basic():
         "minutes_in_treatment": 5.0,
         "treated_at": 1,
     }
-    assert reward == -1
+    assert reward == 0
     assert not terminated and not truncated
 
     clinic_env.step(0)
@@ -105,7 +105,7 @@ def test_basic():
         "minutes_in_treatment": 10.0,
         "treated_at": 1,
     }
-    assert reward == -1
+    assert reward == 0
 
     clinic_env.step(0)
     (_, obs), reward, _, _, _ = clinic_env.step(2)
@@ -138,7 +138,7 @@ def test_basic():
         "minutes_in_treatment": 5.0,
         "treated_at": 2,
     }
-    assert reward == -1
+    assert reward == 0
 
     clinic_env.step(1)
     (_, obs), reward, _, _, _ = clinic_env.step(0)
@@ -200,14 +200,14 @@ def test_basic():
     for _ in range(3):
         clinic_env.step(0)
     (_, obs), reward, terminated, _, _ = clinic_env.step(0)
-    assert reward == 0
+    assert reward == 0.1
     assert terminated
 
 
 def assert_game_over(state, obs, reward, terminated):
     assert state == 1
     assert obs == 0
-    assert reward == -1_000
+    assert reward == -1
     assert terminated
 
 
