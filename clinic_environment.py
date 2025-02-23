@@ -30,6 +30,7 @@ class Nurse:
                 "location": gym.spaces.Discrete(num_clinics, start=1),
                 "operating_minutes_left": gym.spaces.Box(0.0, float(OPERATING_TIME)),
                 "traveling_minutes_left": gym.spaces.Box(0.0, float(OPERATING_TIME)),
+                "status": gym.spaces.Discrete(3, start=1),
             }
         )
 
@@ -38,6 +39,7 @@ class Nurse:
             "location": self.location.idx + 1,
             "operating_minutes_left": float(self.operating_minutes_left),
             "traveling_minutes_left": float(self.traveling_minutes_left),
+            "status": self.status,
         }
 
     def treat(self, patient: "Patient"):

@@ -7,6 +7,7 @@ import torch
 import torch.nn.functional as F
 import torch.optim as optim
 from torch import nn
+from torch.utils.tensorboard import SummaryWriter
 
 SAMPLE_SIZE = 5_000
 
@@ -61,14 +62,19 @@ class ClinicAgent:
 class DQN(nn.Module):
     def __init__(self, n_observations, n_actions):
         super(DQN, self).__init__()
-        self.layer1 = nn.Linear(n_observations, 128)
-        self.layer2 = nn.Linear(128, 128)
-        self.layer3 = nn.Linear(128, n_actions)
+        N = 128
+        self.model = nn.Sequential(
+            nn.Linear(n_observations, N),
+            nn.ReLU(),
+            nn.Linear(N, N),
+            nn.ReLU(),
+            nn.Linear(N, N),
+            nn.ReLU(),
+            nn.Linear(N, n_actions),
+        )
 
     def forward(self, x):
-        x = F.relu(self.layer1(x))
-        x = F.relu(self.layer2(x))
-        return self.layer3(x)
+        return self.model(x)
 
 
 Transition = namedtuple("Transition", ("state", "action", "next_state", "reward"))
@@ -96,6 +102,7 @@ class ClinicDQNAgent:
         initial_epsilon: float,
         epsilon_decay: float,
         final_epsilon: float,
+        writer: SummaryWriter | None = None,
         discount_factor: float = 1.0,
         tau: float = 0.005,
         batch_size: int = 128,
@@ -123,8 +130,9 @@ class ClinicDQNAgent:
         self.final_epsilon = final_epsilon
         self.tau = tau
         self.batch_size = batch_size
-        self.training_error = []
         self.sample_stats: tuple[torch.Tensor, torch.Tensor] | None = None
+        self.writer = writer
+        self.batch_idx = 0
 
     def get_action(self, obs, randomize: bool = True) -> int:
         valid_actions = self.env.get_valid_actions()
@@ -195,7 +203,9 @@ class ClinicDQNAgent:
 
         criterion = nn.SmoothL1Loss()
         loss = criterion(state_action_values, expected_state_action_values.unsqueeze(1))
-        self.training_error.append(loss.item())
+        if self.writer is not None:
+            self.writer.add_scalar("Training Error", loss.item(), self.batch_idx)
+        self.batch_idx += 1
 
         self.optimizer.zero_grad()
         loss.backward()
