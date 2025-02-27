@@ -59,11 +59,24 @@ class ClinicAgent:
         self.epsilon = max(self.final_epsilon, self.epsilon - self.epsilon_decay)
 
 
+class ResidualBlock(nn.Module):
+    def __init__(self, in_channels, out_channels):
+        super(ResidualBlock, self).__init__()
+        self.model = nn.Linear(in_channels, out_channels)
+
+    def forward(self, x):
+        residual = x
+        out = self.model(x)
+        out = out + residual
+        out = F.relu(out)
+        return out
+
+
 class DQN(nn.Module):
     def __init__(self, n_observations, n_actions):
         super(DQN, self).__init__()
-        N = 128
-        self.model = nn.Sequential(
+        N = 256
+        self.blocks = nn.Sequential(
             nn.Linear(n_observations, N),
             nn.ReLU(),
             nn.Linear(N, N),
@@ -74,7 +87,7 @@ class DQN(nn.Module):
         )
 
     def forward(self, x):
-        return self.model(x)
+        return self.blocks(x)
 
 
 Transition = namedtuple("Transition", ("state", "action", "next_state", "reward"))
@@ -102,6 +115,7 @@ class ClinicDQNAgent:
         initial_epsilon: float,
         epsilon_decay: float,
         final_epsilon: float,
+        n_iter: int,
         writer: SummaryWriter | None = None,
         discount_factor: float = 1.0,
         tau: float = 0.005,
@@ -121,7 +135,8 @@ class ClinicDQNAgent:
         self.optimizer = optim.AdamW(
             self.policy_net.parameters(), lr=learning_rate, amsgrad=True
         )
-        self.memory = ReplayMemory(10_000)
+        self.scheduler = optim.lr_scheduler.CosineAnnealingLR(self.optimizer, n_iter)
+        self.memory = ReplayMemory(50_000)
 
         self.discount_factor = discount_factor
 
@@ -130,48 +145,32 @@ class ClinicDQNAgent:
         self.final_epsilon = final_epsilon
         self.tau = tau
         self.batch_size = batch_size
-        self.sample_stats: tuple[torch.Tensor, torch.Tensor] | None = None
         self.writer = writer
         self.batch_idx = 0
 
     def get_action(self, obs, randomize: bool = True) -> int:
         valid_actions = self.env.get_valid_actions()
-        if randomize and (
-            self.sample_stats is None or np.random.random() < self.epsilon
-        ):
+        if randomize and (np.random.random() < self.epsilon):
             return torch.tensor(
                 [[np.random.choice(valid_actions)]],
                 device=self.device,
                 dtype=torch.long,
             )
         else:
+            self.policy_net.eval()
+            self.target_net.eval()
             with torch.no_grad():
-                non_zero_std, mean = self.sample_stats
-                obs = (
-                    torch.tensor(
-                        obs, dtype=torch.float32, device=self.device
-                    ).unsqueeze(0)
-                    - mean
-                ) / non_zero_std
+                obs = torch.tensor(
+                    obs, dtype=torch.float32, device=self.device
+                ).unsqueeze(0)
                 return self.policy_net(obs).max(1).indices.view(1, 1)
-
-    def _set_sample_stats(self):
-        transitions = self.memory.sample(SAMPLE_SIZE)
-        batch = Transition(*zip(*transitions))
-
-        state_batch = torch.cat(batch.state)
-        std, mean = torch.std_mean(state_batch, dim=0)
-        non_zero_std = torch.where(std == 0, 1.0, 0.0) + std
-        self.sample_stats = (non_zero_std, mean)
 
     def optimize_model(self):
         if len(self.memory) < SAMPLE_SIZE:
             return
 
-        if self.sample_stats is None:
-            self._set_sample_stats()
-
-        non_zero_std, mean = self.sample_stats
+        self.policy_net.train()
+        self.target_net.train()
 
         transitions = self.memory.sample(self.batch_size)
 
@@ -182,10 +181,10 @@ class ClinicDQNAgent:
             device=self.device,
             dtype=torch.bool,
         )
-        non_final_next_states = (
-            torch.cat([s for s in batch.next_state if s is not None]) - mean
-        ) / non_zero_std
-        state_batch = (torch.cat(batch.state) - mean) / non_zero_std
+        non_final_next_states = torch.cat(
+            [s for s in batch.next_state if s is not None]
+        )
+        state_batch = torch.cat(batch.state)
         action_batch = torch.cat(batch.action)
         reward_batch = torch.cat(batch.reward)
 
@@ -215,15 +214,17 @@ class ClinicDQNAgent:
 
     def update(self, state, action, reward, terminated, next_state):
         """Update the Q-value of an action."""
-        state = torch.tensor(state, dtype=torch.float32, device=self.device).unsqueeze(
-            0
-        )
+        state = torch.tensor(
+            self.env.normalize_state(state), dtype=torch.float32, device=self.device
+        ).unsqueeze(0)
         reward = torch.tensor([reward], device=self.device)
         if terminated:
             next_state = None
         else:
             next_state = torch.tensor(
-                next_state, dtype=torch.float32, device=self.device
+                self.env.normalize_state(next_state),
+                dtype=torch.float32,
+                device=self.device,
             ).unsqueeze(0)
 
         self.memory.push(state, action, next_state, reward)
@@ -241,3 +242,6 @@ class ClinicDQNAgent:
 
     def decay_epsilon(self):
         self.epsilon = max(self.final_epsilon, self.epsilon - self.epsilon_decay)
+
+    def update_lr(self):
+        self.scheduler.step()

@@ -4,6 +4,7 @@ import gymnasium as gym
 import numpy as np
 
 OPERATING_TIME = 15
+MAX_TRAVEL_TIME = 30
 MAX_TREATMENT_TIME = 1000
 MAX_CAPACITY = 10
 MINUTE_PER_STEP = 5
@@ -34,12 +35,34 @@ class Nurse:
             }
         )
 
+    @staticmethod
+    def get_normalized_observation_space(num_clinics: int) -> gym.spaces.Space:
+        return gym.spaces.Dict(
+            {
+                "location": gym.spaces.Discrete(num_clinics, start=1),
+                "operating_minutes_left": gym.spaces.Box(0.0, 1.0),
+                "traveling_minutes_left": gym.spaces.Box(0.0, 1.0),
+                "status": gym.spaces.Discrete(3, start=1),
+            }
+        )
+
     def _get_obs(self):
         return {
             "location": self.location.idx + 1,
             "operating_minutes_left": float(self.operating_minutes_left),
             "traveling_minutes_left": float(self.traveling_minutes_left),
             "status": self.status,
+        }
+
+    @staticmethod
+    def normalize_obs(obs: dict) -> dict:
+        return {
+            "location": obs["location"],
+            "operating_minutes_left": obs["operating_minutes_left"]
+            / float(OPERATING_TIME),
+            "traveling_minutes_left": obs["traveling_minutes_left"]
+            / float(MAX_TRAVEL_TIME),
+            "status": obs["status"],
         }
 
     def treat(self, patient: "Patient"):
@@ -103,12 +126,32 @@ class Patient:
             }
         )
 
+    @staticmethod
+    def get_normalized_observation_space(num_clinics: int) -> gym.spaces.Space:
+        return gym.spaces.Dict(
+            {
+                "status": gym.spaces.Discrete(3, start=1),
+                "treatment_rate": gym.spaces.Box(0.0, 1.0),
+                "minutes_in_treatment": gym.spaces.Box(0.0, 1.0),
+                "treated_at": gym.spaces.Discrete(num_clinics + 1),
+            }
+        )
+
     def _get_obs(self):
         return {
             "status": int(self.status),
             "treatment_time": float(self.treatmet_time),
             "minutes_in_treatment": float(self.minutes_in_treatment),
             "treated_at": 0 if self.treated_at is None else self.treated_at.idx + 1,
+        }
+
+    @staticmethod
+    def normalize_obs(obs: dict) -> dict:
+        return {
+            "status": obs["status"],
+            "treatment_rate": 1.0 / obs["treatment_time"],
+            "minutes_in_treatment": obs["minutes_in_treatment"] / obs["treatment_time"],
+            "treated_at": obs["treated_at"],
         }
 
     def get_treatment_from(self, nurse: Nurse):
@@ -182,10 +225,26 @@ class Clinic:
             }
         )
 
+    @staticmethod
+    def get_normalized_observation_space() -> gym.spaces.Space:
+        return gym.spaces.Dict(
+            {
+                "fill_rate": gym.spaces.Box(0.0, 1.0),
+                "fill_percentage": gym.spaces.Box(0.0, 1.0),
+            }
+        )
+
     def _get_obs(self):
         return {
             "capacity": float(self.capacity),
             "num_patients": float(len(self.patients)),
+        }
+
+    @staticmethod
+    def normalize_obs(obs: dict) -> dict:
+        return {
+            "fill_rate": 1.0 / obs["capacity"],
+            "fill_percentage": obs["num_patients"] / obs["capacity"],
         }
 
     def num_available_seats(self) -> int:
@@ -238,6 +297,35 @@ class ClinicEnv(gym.Env):
                 ),
                 "clinics": gym.spaces.Tuple(
                     tuple([Clinic.get_observation_space() for _ in self.clinics])
+                ),
+            }
+        )
+        self.nonterminal_normalized_observation_space = gym.spaces.Dict(
+            {
+                "nurse_turn": gym.spaces.Discrete(num_nurses),
+                "nurses": gym.spaces.Tuple(
+                    tuple(
+                        [
+                            Nurse.get_normalized_observation_space(len(self.clinics))
+                            for _ in self.nurses
+                        ]
+                    )
+                ),
+                "patients": gym.spaces.Tuple(
+                    tuple(
+                        [
+                            Patient.get_normalized_observation_space(len(self.clinics))
+                            for _ in self.patients
+                        ]
+                    )
+                ),
+                "clinics": gym.spaces.Tuple(
+                    tuple(
+                        [
+                            Clinic.get_normalized_observation_space()
+                            for _ in self.clinics
+                        ]
+                    )
                 ),
             }
         )
@@ -402,3 +490,21 @@ class ClinicEnv(gym.Env):
             truncated = False
 
             return obs, reward, terminated, truncated, info
+
+    def normalize_state(self, state: dict) -> np.array:
+        mode, obs = state
+        if mode == 1:
+            return None
+
+        normalized_obs = {}
+        normalized_obs["nurse_turn"] = obs["nurse_turn"]
+        normalized_obs["nurses"] = tuple(
+            [Nurse.normalize_obs(nurse_obs) for nurse_obs in obs["nurses"]]
+        )
+        normalized_obs["patients"] = tuple(
+            [Patient.normalize_obs(patient_obs) for patient_obs in obs["patients"]]
+        )
+        normalized_obs["clinics"] = tuple(
+            [Clinic.normalize_obs(clinic_obs) for clinic_obs in obs["clinics"]]
+        )
+        return normalized_obs

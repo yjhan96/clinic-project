@@ -1,6 +1,6 @@
 import numpy as np
 
-from clinic_environment import ClinicEnv
+from clinic_environment import ClinicEnv, NurseStatus
 
 
 def get_test_env() -> ClinicEnv:
@@ -31,8 +31,18 @@ def test_obs():
     )
 
     assert obs["nurses"] == (
-        {"location": 1, "operating_minutes_left": 0.0, "traveling_minutes_left": 0.0},
-        {"location": 1, "operating_minutes_left": 0.0, "traveling_minutes_left": 0.0},
+        {
+            "location": 1,
+            "operating_minutes_left": 0.0,
+            "traveling_minutes_left": 0.0,
+            "status": NurseStatus.IDLE,
+        },
+        {
+            "location": 1,
+            "operating_minutes_left": 0.0,
+            "traveling_minutes_left": 0.0,
+            "status": NurseStatus.IDLE,
+        },
     )
 
     assert obs["patients"] == (
@@ -51,6 +61,76 @@ def test_obs():
     )
 
 
+def test_normalized_obs():
+    clinic_env = get_test_env()
+    state, info = clinic_env.reset()
+
+    normalized_obs = clinic_env.normalize_state(state)
+    assert normalized_obs["nurse_turn"] == 0
+    assert normalized_obs["clinics"] == (
+        {"fill_rate": 1.0, "fill_percentage": 0.0},
+        {"fill_rate": 0.5, "fill_percentage": 0.0},
+    )
+    assert normalized_obs["nurses"] == (
+        {
+            "location": 1,
+            "operating_minutes_left": 0.0,
+            "traveling_minutes_left": 0.0,
+            "status": 1,
+        },
+        {
+            "location": 1,
+            "operating_minutes_left": 0.0,
+            "traveling_minutes_left": 0.0,
+            "status": 1,
+        },
+    )
+    assert normalized_obs["patients"] == (
+        {
+            "status": 1,
+            "treatment_rate": 1.0 / 30.0,
+            "minutes_in_treatment": 0.0,
+            "treated_at": 0,
+        },
+        {
+            "status": 1,
+            "treatment_rate": 1.0 / 40.0,
+            "minutes_in_treatment": 0.0,
+            "treated_at": 0,
+        },
+    )
+
+    state, _, _, _, _ = clinic_env.step(1)
+    normalized_obs = clinic_env.normalize_state(state)
+    assert normalized_obs["nurses"][0] == (
+        {
+            "location": 1,
+            "operating_minutes_left": 15.0 / 15.0,
+            "traveling_minutes_left": 0.0,
+            "status": 2,
+        }
+    )
+    state, _, _, _, _ = clinic_env.step(4)
+    normalized_obs = clinic_env.normalize_state(state)
+    assert normalized_obs["nurses"][0] == (
+        {
+            "location": 1,
+            # Because time has passed.
+            "operating_minutes_left": 10.0 / 15.0,
+            "traveling_minutes_left": 0.0,
+            "status": 2,
+        }
+    )
+    assert normalized_obs["nurses"][1] == (
+        {
+            "location": 2,
+            "operating_minutes_left": 0.0,
+            "traveling_minutes_left": 5.0 / 30.0,
+            "status": 3,
+        }
+    )
+
+
 def test_basic():
     clinic_env = get_test_env()
 
@@ -65,11 +145,13 @@ def test_basic():
         "location": 1,
         "operating_minutes_left": 10.0,
         "traveling_minutes_left": 0.0,
+        "status": NurseStatus.IN_OPERATION,
     }
     assert nurse_states[1] == {
         "location": 2,
         "operating_minutes_left": 0.0,
         "traveling_minutes_left": 5.0,
+        "status": NurseStatus.TRAVELING,
     }
 
     clinic_states = obs["clinics"]
@@ -92,11 +174,13 @@ def test_basic():
         "location": 1,
         "operating_minutes_left": 5.0,
         "traveling_minutes_left": 0.0,
+        "status": NurseStatus.IN_OPERATION,
     }
     assert nurse_states[1] == {
         "location": 2,
         "operating_minutes_left": 0.0,
         "traveling_minutes_left": 0.0,
+        "status": NurseStatus.IDLE,
     }
     patient_states = obs["patients"]
     assert patient_states[0] == {
@@ -114,11 +198,13 @@ def test_basic():
         "location": 1,
         "operating_minutes_left": 0.0,
         "traveling_minutes_left": 0.0,
+        "status": NurseStatus.IDLE,
     }
     assert nurse_states[1] == {
         "location": 2,
         "operating_minutes_left": 10.0,
         "traveling_minutes_left": 0.0,
+        "status": NurseStatus.IN_OPERATION,
     }
 
     clinic_states = obs["clinics"]
@@ -147,6 +233,7 @@ def test_basic():
         "location": 1,
         "operating_minutes_left": 10.0,
         "traveling_minutes_left": 0.0,
+        "status": NurseStatus.IN_OPERATION,
     }
     patient_states = obs["patients"]
     assert patient_states[0] == {
@@ -165,6 +252,7 @@ def test_basic():
         "location": 1,
         "operating_minutes_left": 0.0,
         "traveling_minutes_left": 0.0,
+        "status": NurseStatus.IDLE,
     }
 
     clinic_states = obs["clinics"]
