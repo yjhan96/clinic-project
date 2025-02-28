@@ -60,9 +60,9 @@ class ClinicAgent:
 
 
 class ResidualBlock(nn.Module):
-    def __init__(self, in_channels, out_channels):
+    def __init__(self, num_channels):
         super(ResidualBlock, self).__init__()
-        self.model = nn.Linear(in_channels, out_channels)
+        self.model = nn.Linear(num_channels, num_channels)
 
     def forward(self, x):
         residual = x
@@ -79,11 +79,11 @@ class DQN(nn.Module):
         self.blocks = nn.Sequential(
             nn.Linear(n_observations, N),
             nn.ReLU(),
-            nn.Linear(N, N),
-            nn.ReLU(),
-            nn.Linear(N, N),
-            nn.ReLU(),
+            ResidualBlock(N),
+            ResidualBlock(N),
+            ResidualBlock(N),
             nn.Linear(N, n_actions),
+            nn.Tanh(),
         )
 
     def forward(self, x):
@@ -124,19 +124,18 @@ class ClinicDQNAgent:
     ):
         self.env = env
         self.device = device
-        self.policy_net = DQN(env.observation_space.shape[0], env.action_space.n).to(
-            device
-        )
-        self.target_net = DQN(env.observation_space.shape[0], env.action_space.n).to(
-            device
-        )
+        input_len = gym.spaces.utils.flatten_space(
+            env.nonterminal_normalized_observation_space
+        ).shape[0]
+        self.policy_net = DQN(input_len, env.action_space.n).to(device)
+        self.target_net = DQN(input_len, env.action_space.n).to(device)
         self.target_net.load_state_dict(self.policy_net.state_dict())
 
-        self.optimizer = optim.AdamW(
+        self.optimizer = optim.Adam(
             self.policy_net.parameters(), lr=learning_rate, amsgrad=True
         )
-        self.scheduler = optim.lr_scheduler.CosineAnnealingLR(self.optimizer, n_iter)
-        self.memory = ReplayMemory(50_000)
+        # self.scheduler = optim.lr_scheduler.CosineAnnealingLR(self.optimizer, n_iter)
+        self.memory = ReplayMemory(100_000)
 
         self.discount_factor = discount_factor
 
@@ -160,10 +159,14 @@ class ClinicDQNAgent:
             self.policy_net.eval()
             self.target_net.eval()
             with torch.no_grad():
-                obs = torch.tensor(
-                    obs, dtype=torch.float32, device=self.device
+                obs_arr = gym.spaces.utils.flatten(
+                    self.env.nonterminal_normalized_observation_space,
+                    self.env.normalize_state(obs),
+                )
+                obs_tensor = torch.tensor(
+                    obs_arr, dtype=torch.float32, device=self.device
                 ).unsqueeze(0)
-                return self.policy_net(obs).max(1).indices.view(1, 1)
+                return self.policy_net(obs_tensor).max(1).indices.view(1, 1)
 
     def optimize_model(self):
         if len(self.memory) < SAMPLE_SIZE:
@@ -209,25 +212,33 @@ class ClinicDQNAgent:
         self.optimizer.zero_grad()
         loss.backward()
 
-        torch.nn.utils.clip_grad_value_(self.policy_net.parameters(), 100)
+        torch.nn.utils.clip_grad_value_(self.policy_net.parameters(), 10)
         self.optimizer.step()
 
     def update(self, state, action, reward, terminated, next_state):
         """Update the Q-value of an action."""
-        state = torch.tensor(
-            self.env.normalize_state(state), dtype=torch.float32, device=self.device
+        state_arr = gym.spaces.utils.flatten(
+            self.env.nonterminal_normalized_observation_space,
+            self.env.normalize_state(state),
+        )
+        state_tensor = torch.tensor(
+            state_arr, dtype=torch.float32, device=self.device
         ).unsqueeze(0)
         reward = torch.tensor([reward], device=self.device)
         if terminated:
-            next_state = None
+            next_state_tensor = None
         else:
-            next_state = torch.tensor(
+            next_state_arr = gym.spaces.utils.flatten(
+                self.env.nonterminal_normalized_observation_space,
                 self.env.normalize_state(next_state),
+            )
+            next_state_tensor = torch.tensor(
+                next_state_arr,
                 dtype=torch.float32,
                 device=self.device,
             ).unsqueeze(0)
 
-        self.memory.push(state, action, next_state, reward)
+        self.memory.push(state_tensor, action, next_state_tensor, reward)
 
         self.optimize_model()
 

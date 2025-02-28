@@ -491,7 +491,7 @@ class ClinicEnv(gym.Env):
 
             return obs, reward, terminated, truncated, info
 
-    def normalize_state(self, state: dict) -> np.array:
+    def normalize_state(self, state) -> np.array:
         mode, obs = state
         if mode == 1:
             return None
