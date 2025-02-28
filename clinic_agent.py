@@ -83,6 +83,7 @@ class DQN(nn.Module):
             ResidualBlock(N),
             ResidualBlock(N),
             nn.Linear(N, n_actions),
+            # To normalize the output into [-1, 1].
             nn.Tanh(),
         )
 
@@ -90,7 +91,9 @@ class DQN(nn.Module):
         return self.blocks(x)
 
 
-Transition = namedtuple("Transition", ("state", "action", "next_state", "reward"))
+Transition = namedtuple(
+    "Transition", ("state", "action", "next_state", "valid_actions", "reward")
+)
 
 
 class ReplayMemory:
@@ -158,15 +161,27 @@ class ClinicDQNAgent:
         else:
             self.policy_net.eval()
             self.target_net.eval()
+            obs_arr = gym.spaces.utils.flatten(
+                self.env.nonterminal_normalized_observation_space,
+                self.env.normalize_state(obs),
+            )
+            obs_tensor = torch.tensor(
+                obs_arr, dtype=torch.float32, device=self.device
+            ).unsqueeze(0)
+
+            valid_actions_arr = [False for _ in range(self.env.action_space.n)]
+            for valid_action_idx in valid_actions:
+                valid_actions_arr[valid_action_idx] = True
+
+            valid_actions_tensor = torch.tensor(
+                valid_actions_arr, dtype=torch.bool, device=self.device
+            ).unsqueeze(0)
             with torch.no_grad():
-                obs_arr = gym.spaces.utils.flatten(
-                    self.env.nonterminal_normalized_observation_space,
-                    self.env.normalize_state(obs),
+                predictions = self.policy_net(obs_tensor)
+                masked_predictions = torch.where(
+                    valid_actions_tensor, predictions, -1.0
                 )
-                obs_tensor = torch.tensor(
-                    obs_arr, dtype=torch.float32, device=self.device
-                ).unsqueeze(0)
-                return self.policy_net(obs_tensor).max(1).indices.view(1, 1)
+                return masked_predictions.max(1).indices.view(1, 1)
 
     def optimize_model(self):
         if len(self.memory) < SAMPLE_SIZE:
@@ -187,6 +202,9 @@ class ClinicDQNAgent:
         non_final_next_states = torch.cat(
             [s for s in batch.next_state if s is not None]
         )
+        non_final_valid_actions = torch.cat(
+            [a for a in batch.valid_actions if a is not None]
+        )
         state_batch = torch.cat(batch.state)
         action_batch = torch.cat(batch.action)
         reward_batch = torch.cat(batch.reward)
@@ -195,9 +213,11 @@ class ClinicDQNAgent:
 
         next_state_values = torch.zeros(self.batch_size, device=self.device)
         with torch.no_grad():
-            next_state_values[non_final_mask] = (
-                self.target_net(non_final_next_states).max(1).values
+            target_predictions = self.target_net(non_final_next_states)
+            masked_predictions = torch.where(
+                non_final_valid_actions, target_predictions, -1.0
             )
+            next_state_values[non_final_mask] = masked_predictions.max(1).values
 
         expected_state_action_values = (
             next_state_values * self.discount_factor
@@ -227,6 +247,7 @@ class ClinicDQNAgent:
         reward = torch.tensor([reward], device=self.device)
         if terminated:
             next_state_tensor = None
+            valid_actions_tensor = None
         else:
             next_state_arr = gym.spaces.utils.flatten(
                 self.env.nonterminal_normalized_observation_space,
@@ -238,7 +259,17 @@ class ClinicDQNAgent:
                 device=self.device,
             ).unsqueeze(0)
 
-        self.memory.push(state_tensor, action, next_state_tensor, reward)
+            valid_action_indices = self.env.get_valid_actions()
+            valid_actions_arr = [False for _ in range(self.env.action_space.n)]
+            for idx in valid_action_indices:
+                valid_actions_arr[idx] = True
+            valid_actions_tensor = torch.tensor(
+                valid_actions_arr, dtype=torch.bool, device=self.device
+            ).unsqueeze(0)
+
+        self.memory.push(
+            state_tensor, action, next_state_tensor, valid_actions_tensor, reward
+        )
 
         self.optimize_model()
 
