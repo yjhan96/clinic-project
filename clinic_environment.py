@@ -396,7 +396,7 @@ class ClinicEnv(gym.Env):
     def _get_terminal_state(self):
         self.is_terminated = True
         obs = self._get_obs()
-        reward = -1
+        reward = 0
         terminated = True
         truncated = False
         info = self._get_info()

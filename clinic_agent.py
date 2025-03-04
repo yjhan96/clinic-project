@@ -9,7 +9,7 @@ import torch.optim as optim
 from torch import nn
 from torch.utils.tensorboard import SummaryWriter
 
-SAMPLE_SIZE = 5_000
+SAMPLE_SIZE = 50_000
 
 
 class ClinicAgent:
@@ -83,12 +83,10 @@ class DQN(nn.Module):
             ResidualBlock(N),
             ResidualBlock(N),
             nn.Linear(N, n_actions),
-            # To normalize the output into [-1, 1].
-            nn.Tanh(),
         )
 
     def forward(self, x):
-        return self.blocks(x)
+        return F.tanh(self.blocks(x)) / 2.0 + 0.5
 
 
 Transition = namedtuple(
@@ -123,6 +121,7 @@ class ClinicDQNAgent:
         discount_factor: float = 1.0,
         tau: float = 0.005,
         batch_size: int = 128,
+        num_lookbacks=10,
         device="mps",
     ):
         self.env = env
@@ -138,7 +137,8 @@ class ClinicDQNAgent:
             self.policy_net.parameters(), lr=learning_rate, amsgrad=True
         )
         # self.scheduler = optim.lr_scheduler.CosineAnnealingLR(self.optimizer, n_iter)
-        self.memory = ReplayMemory(100_000)
+        self.memory = ReplayMemory(500_000)
+        self.prev_states_and_rewards = deque([])
 
         self.discount_factor = discount_factor
 
@@ -148,6 +148,7 @@ class ClinicDQNAgent:
         self.tau = tau
         self.batch_size = batch_size
         self.writer = writer
+        self.num_lookbacks = num_lookbacks
         self.batch_idx = 0
 
     def get_action(self, obs, randomize: bool = True) -> int:
@@ -178,9 +179,7 @@ class ClinicDQNAgent:
             ).unsqueeze(0)
             with torch.no_grad():
                 predictions = self.policy_net(obs_tensor)
-                masked_predictions = torch.where(
-                    valid_actions_tensor, predictions, -1.0
-                )
+                masked_predictions = torch.where(valid_actions_tensor, predictions, 0.0)
                 return masked_predictions.max(1).indices.view(1, 1)
 
     def optimize_model(self):
@@ -267,9 +266,39 @@ class ClinicDQNAgent:
                 valid_actions_arr, dtype=torch.bool, device=self.device
             ).unsqueeze(0)
 
-        self.memory.push(
-            state_tensor, action, next_state_tensor, valid_actions_tensor, reward
-        )
+        self.prev_states_and_rewards.append((state_tensor, reward))
+        while (terminated and len(self.prev_states_and_rewards) > 0) or len(
+            self.prev_states_and_rewards
+        ) == self.num_lookbacks:
+            discount_factors = torch.tensor(
+                [
+                    self.discount_factor ** (i + 1)
+                    for i in range(len(self.prev_states_and_rewards))
+                ],
+                dtype=torch.float32,
+                device=self.device,
+            )
+            total_reward = (
+                torch.mul(
+                    torch.concat(
+                        [
+                            state_and_reward[1]
+                            for state_and_reward in self.prev_states_and_rewards
+                        ]
+                    ),
+                    discount_factors,
+                )
+                .sum()
+                .unsqueeze(0)
+            )
+            state_tensor = self.prev_states_and_rewards.popleft()[0]
+            self.memory.push(
+                state_tensor,
+                action,
+                next_state_tensor,
+                valid_actions_tensor,
+                total_reward,
+            )
 
         self.optimize_model()
 
