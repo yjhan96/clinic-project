@@ -121,7 +121,7 @@ class ClinicDQNAgent:
         discount_factor: float = 1.0,
         tau: float = 0.005,
         batch_size: int = 128,
-        num_lookbacks=10,
+        num_lookbacks=3,
         device="mps",
     ):
         self.env = env
@@ -136,8 +136,7 @@ class ClinicDQNAgent:
         self.optimizer = optim.Adam(
             self.policy_net.parameters(), lr=learning_rate, amsgrad=True
         )
-        # self.scheduler = optim.lr_scheduler.CosineAnnealingLR(self.optimizer, n_iter)
-        self.memory = ReplayMemory(500_000)
+        self.memory = ReplayMemory(800_000)
         self.prev_states_and_rewards = deque([])
 
         self.discount_factor = discount_factor
@@ -170,13 +169,13 @@ class ClinicDQNAgent:
                 obs_arr, dtype=torch.float32, device=self.device
             ).unsqueeze(0)
 
-            valid_actions_arr = [False for _ in range(self.env.action_space.n)]
-            for valid_action_idx in valid_actions:
-                valid_actions_arr[valid_action_idx] = True
-
             valid_actions_tensor = torch.tensor(
-                valid_actions_arr, dtype=torch.bool, device=self.device
-            ).unsqueeze(0)
+                [False for _ in range(self.env.action_space.n)],
+                dtype=torch.bool,
+                device=self.device,
+            )
+            valid_actions_tensor[list(valid_actions)] = True
+
             with torch.no_grad():
                 predictions = self.policy_net(obs_tensor)
                 masked_predictions = torch.where(valid_actions_tensor, predictions, 0.0)
@@ -202,7 +201,7 @@ class ClinicDQNAgent:
             [s for s in batch.next_state if s is not None]
         )
         non_final_valid_actions = torch.cat(
-            [a for a in batch.valid_actions if a is not None]
+            [a.unsqueeze(0) for a in batch.valid_actions if a is not None]
         )
         state_batch = torch.cat(batch.state)
         action_batch = torch.cat(batch.action)
@@ -234,8 +233,7 @@ class ClinicDQNAgent:
         torch.nn.utils.clip_grad_value_(self.policy_net.parameters(), 10)
         self.optimizer.step()
 
-    def update(self, state, action, reward, terminated, next_state):
-        """Update the Q-value of an action."""
+    def _to_tensor(self, state, action, reward, terminated, next_state) -> tuple:
         state_arr = gym.spaces.utils.flatten(
             self.env.nonterminal_normalized_observation_space,
             self.env.normalize_state(state),
@@ -259,26 +257,37 @@ class ClinicDQNAgent:
             ).unsqueeze(0)
 
             valid_action_indices = self.env.get_valid_actions()
-            valid_actions_arr = [False for _ in range(self.env.action_space.n)]
-            for idx in valid_action_indices:
-                valid_actions_arr[idx] = True
             valid_actions_tensor = torch.tensor(
-                valid_actions_arr, dtype=torch.bool, device=self.device
-            ).unsqueeze(0)
+                [False for _ in range(self.env.action_space.n)],
+                dtype=torch.bool,
+                device=self.device,
+            )
+            valid_actions_tensor[list(valid_action_indices)] = True
 
-        self.prev_states_and_rewards.append((state_tensor, reward))
+        return (state_tensor, action, reward, next_state_tensor, valid_actions_tensor)
+
+    def update(self, state, action, reward, terminated, next_state):
+        """Update the Q-value of an action."""
+        (
+            state_tensor,
+            action_tensor,
+            reward_tensor,
+            next_state_tensor,
+            valid_actions_tensor,
+        ) = self._to_tensor(state, action, reward, terminated, next_state)
+        self.prev_states_and_rewards.append((state_tensor, reward_tensor))
         while (terminated and len(self.prev_states_and_rewards) > 0) or len(
             self.prev_states_and_rewards
         ) == self.num_lookbacks:
             discount_factors = torch.tensor(
                 [
-                    self.discount_factor ** (i + 1)
+                    self.discount_factor**i
                     for i in range(len(self.prev_states_and_rewards))
                 ],
                 dtype=torch.float32,
                 device=self.device,
             )
-            total_reward = (
+            total_reward_tensor = (
                 torch.mul(
                     torch.concat(
                         [
@@ -294,10 +303,10 @@ class ClinicDQNAgent:
             state_tensor = self.prev_states_and_rewards.popleft()[0]
             self.memory.push(
                 state_tensor,
-                action,
+                action_tensor,
                 next_state_tensor,
                 valid_actions_tensor,
-                total_reward,
+                total_reward_tensor,
             )
 
         self.optimize_model()
