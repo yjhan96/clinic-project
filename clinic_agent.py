@@ -1,5 +1,4 @@
-import random
-from collections import defaultdict, deque, namedtuple
+from collections import defaultdict, deque
 
 import gymnasium as gym
 import numpy as np
@@ -9,7 +8,10 @@ import torch.optim as optim
 from torch import nn
 from torch.utils.tensorboard import SummaryWriter
 
+from buffers import PrioritizedReplayBuffer, Transition
+
 SAMPLE_SIZE = 50_000
+MAX_ABS_LOSS = 2.0
 
 
 class ClinicAgent:
@@ -89,25 +91,6 @@ class DQN(nn.Module):
         return F.tanh(self.blocks(x)) / 2.0 + 0.5
 
 
-Transition = namedtuple(
-    "Transition", ("state", "action", "next_state", "valid_actions", "reward")
-)
-
-
-class ReplayMemory:
-    def __init__(self, capacity):
-        self.memory = deque([], maxlen=capacity)
-
-    def push(self, *args):
-        self.memory.append(Transition(*args))
-
-    def sample(self, batch_size):
-        return random.sample(self.memory, batch_size)
-
-    def __len__(self):
-        return len(self.memory)
-
-
 class ClinicDQNAgent:
     def __init__(
         self,
@@ -136,7 +119,7 @@ class ClinicDQNAgent:
         self.optimizer = optim.Adam(
             self.policy_net.parameters(), lr=learning_rate, amsgrad=True
         )
-        self.memory = ReplayMemory(800_000)
+        self.memory = PrioritizedReplayBuffer(800_000, batch_size)
         self.prev_states_and_rewards = deque([])
 
         self.discount_factor = discount_factor
@@ -188,7 +171,7 @@ class ClinicDQNAgent:
         self.policy_net.train()
         self.target_net.train()
 
-        transitions = self.memory.sample(self.batch_size)
+        transitions, indices, is_weights = self.memory.sample(self.batch_size)
 
         batch = Transition(*zip(*transitions))
 
@@ -221,8 +204,22 @@ class ClinicDQNAgent:
             next_state_values * self.discount_factor
         ) + reward_batch
 
-        criterion = nn.SmoothL1Loss()
-        loss = criterion(state_action_values, expected_state_action_values.unsqueeze(1))
+        with torch.no_grad():
+            abs_loss = torch.abs(
+                state_action_values.squeeze(1) - expected_state_action_values
+            )
+            abs_loss_clamped = torch.clamp(abs_loss, max=MAX_ABS_LOSS)
+            self.memory.update_p_weights(list(zip(indices, abs_loss_clamped.tolist())))
+
+        is_weights_tensor = torch.tensor(
+            is_weights, dtype=torch.float32, device=self.device
+        ).unsqueeze(0)
+        criterion = nn.SmoothL1Loss(reduction="none")
+        loss = (
+            criterion(state_action_values, expected_state_action_values.unsqueeze(1))
+            * is_weights_tensor
+        ).mean()
+
         if self.writer is not None:
             self.writer.add_scalar("Training Error", loss.item(), self.batch_idx)
         self.batch_idx += 1
@@ -307,6 +304,7 @@ class ClinicDQNAgent:
                 next_state_tensor,
                 valid_actions_tensor,
                 total_reward_tensor,
+                p_weight=MAX_ABS_LOSS,
             )
 
         self.optimize_model()
