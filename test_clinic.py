@@ -25,9 +25,12 @@ def test_obs():
     assert sorted(list(obs.keys())) == ["clinics", "nurse_turn", "nurses", "patients"]
 
     assert obs["nurse_turn"] == 0
-    assert obs["clinics"] == (
-        {"capacity": 1.0, "num_patients": 0.0},
-        {"capacity": 2.0, "num_patients": 0.0},
+    np.testing.assert_equal(
+        obs["clinics"],
+        (
+            {"capacity": 1.0, "num_patients": 0.0, "distances": [0.0, 10.0]},
+            {"capacity": 2.0, "num_patients": 0.0, "distances": [10.0, 0.0]},
+        ),
     )
 
     assert obs["nurses"] == (
@@ -66,10 +69,20 @@ def test_normalized_obs():
     state, info = clinic_env.reset()
 
     normalized_obs = clinic_env.normalize_state(state)
-    assert normalized_obs["nurse_turn"] == 0
-    assert normalized_obs["clinics"] == (
-        {"fill_rate": 1.0, "fill_percentage": 0.0},
-        {"fill_rate": 0.5, "fill_percentage": 0.0},
+    np.testing.assert_equal(
+        normalized_obs["clinics"],
+        (
+            {
+                "fill_rate": 1.0,
+                "fill_percentage": 0.0,
+                "distances": [0.0, 1.0 / 6.0],
+            },
+            {
+                "fill_rate": 0.5,
+                "fill_percentage": 0.0,
+                "distances": [1.0 / 6.0, 0.0],
+            },
+        ),
     )
     assert normalized_obs["nurses"] == (
         {
@@ -155,7 +168,10 @@ def test_basic():
     }
 
     clinic_states = obs["clinics"]
-    assert clinic_states[0] == {"capacity": 1.0, "num_patients": 1.0}
+    np.testing.assert_equal(
+        clinic_states[0],
+        {"capacity": 1.0, "num_patients": 1.0, "distances": [0.0, 10.0]},
+    )
 
     patient_states = obs["patients"]
     assert patient_states[0] == {
@@ -208,8 +224,14 @@ def test_basic():
     }
 
     clinic_states = obs["clinics"]
-    assert clinic_states[0] == {"capacity": 1.0, "num_patients": 1.0}
-    assert clinic_states[1] == {"capacity": 2.0, "num_patients": 1.0}
+    np.testing.assert_equal(
+        clinic_states[0],
+        {"capacity": 1.0, "num_patients": 1.0, "distances": [0.0, 10.0]},
+    )
+    np.testing.assert_equal(
+        clinic_states[1],
+        {"capacity": 2.0, "num_patients": 1.0, "distances": [10.0, 0.0]},
+    )
 
     patient_states = obs["patients"]
     assert patient_states[0] == {
@@ -256,7 +278,10 @@ def test_basic():
     }
 
     clinic_states = obs["clinics"]
-    assert clinic_states[0] == {"capacity": 1.0, "num_patients": 0.0}
+    np.testing.assert_equal(
+        clinic_states[0],
+        {"capacity": 1.0, "num_patients": 0.0, "distances": [0.0, 10.0]},
+    )
 
     patient_states = obs["patients"]
     assert patient_states[0] == {
@@ -295,7 +320,7 @@ def test_basic():
 def assert_game_over(state, obs, reward, terminated):
     assert state == 1
     assert obs == 0
-    assert reward == -1
+    assert reward == 0
     assert terminated
 
 

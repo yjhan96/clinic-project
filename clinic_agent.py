@@ -104,7 +104,7 @@ class ClinicDQNAgent:
         discount_factor: float = 1.0,
         tau: float = 0.005,
         batch_size: int = 128,
-        num_lookbacks=3,
+        num_lookbacks=5,
         device="mps",
     ):
         self.env = env
@@ -222,6 +222,9 @@ class ClinicDQNAgent:
 
         if self.writer is not None:
             self.writer.add_scalar("Training Error", loss.item(), self.batch_idx)
+            self.writer.add_scalar(
+                "Sample mean reward", reward_batch.mean().item(), self.batch_idx
+            )
         self.batch_idx += 1
 
         self.optimizer.zero_grad()

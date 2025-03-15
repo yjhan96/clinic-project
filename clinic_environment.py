@@ -8,6 +8,7 @@ MAX_TRAVEL_TIME = 30
 MAX_TREATMENT_TIME = 1000
 MAX_CAPACITY = 10
 MINUTE_PER_STEP = 5
+MAX_HOSPITAL_DISTANCE = 60
 
 
 class NurseStatus(IntEnum):
@@ -217,11 +218,14 @@ class Clinic:
         self.patients: list[Patient] = []
 
     @staticmethod
-    def get_observation_space() -> gym.spaces.Space:
+    def get_observation_space(num_clinics: int) -> gym.spaces.Space:
         return gym.spaces.Dict(
             {
                 "capacity": gym.spaces.Box(1.0, float(MAX_CAPACITY)),
                 "num_patients": gym.spaces.Box(1.0, float(MAX_CAPACITY)),
+                "distances": gym.spaces.Box(
+                    0.0, float(MAX_HOSPITAL_DISTANCE), shape=(num_clinics,)
+                ),
             }
         )
 
@@ -231,13 +235,15 @@ class Clinic:
             {
                 "fill_rate": gym.spaces.Box(0.0, 1.0),
                 "fill_percentage": gym.spaces.Box(0.0, 1.0),
+                "distances": gym.spaces.Box(0.0, 1.0),
             }
         )
 
-    def _get_obs(self):
+    def _get_obs(self, clinic_travel_times: np.ndarray) -> dict:
         return {
             "capacity": float(self.capacity),
             "num_patients": float(len(self.patients)),
+            "distances": clinic_travel_times[self.idx],
         }
 
     @staticmethod
@@ -245,6 +251,7 @@ class Clinic:
         return {
             "fill_rate": 1.0 / obs["capacity"],
             "fill_percentage": obs["num_patients"] / obs["capacity"],
+            "distances": obs["distances"] / MAX_HOSPITAL_DISTANCE,
         }
 
     def num_available_seats(self) -> int:
@@ -296,7 +303,12 @@ class ClinicEnv(gym.Env):
                     )
                 ),
                 "clinics": gym.spaces.Tuple(
-                    tuple([Clinic.get_observation_space() for _ in self.clinics])
+                    tuple(
+                        [
+                            Clinic.get_observation_space(len(self.clinics))
+                            for _ in self.clinics
+                        ]
+                    )
                 ),
             }
         )
@@ -347,7 +359,12 @@ class ClinicEnv(gym.Env):
                     "patients": tuple(
                         [patient._get_obs() for patient in self.patients]
                     ),
-                    "clinics": tuple([clinic._get_obs() for clinic in self.clinics]),
+                    "clinics": tuple(
+                        [
+                            clinic._get_obs(self.clinic_travel_times)
+                            for clinic in self.clinics
+                        ]
+                    ),
                 },
             )
         else:
