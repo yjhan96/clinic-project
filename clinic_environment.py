@@ -230,12 +230,12 @@ class Clinic:
         )
 
     @staticmethod
-    def get_normalized_observation_space() -> gym.spaces.Space:
+    def get_normalized_observation_space(num_clinics: int) -> gym.spaces.Space:
         return gym.spaces.Dict(
             {
                 "fill_rate": gym.spaces.Box(0.0, 1.0),
                 "fill_percentage": gym.spaces.Box(0.0, 1.0),
-                "distances": gym.spaces.Box(0.0, 1.0),
+                "distances": gym.spaces.Box(0.0, 1.0, shape=(num_clinics,)),
             }
         )
 
@@ -334,7 +334,7 @@ class ClinicEnv(gym.Env):
                 "clinics": gym.spaces.Tuple(
                     tuple(
                         [
-                            Clinic.get_normalized_observation_space()
+                            Clinic.get_normalized_observation_space(len(self.clinics))
                             for _ in self.clinics
                         ]
                     )
